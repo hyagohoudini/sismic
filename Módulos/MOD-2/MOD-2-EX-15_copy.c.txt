@@ -1,0 +1,125 @@
+#include<msp430.h>
+
+#define TRUE    1
+#define FALSE   0
+
+#define     ABT         1
+#define     FEC         0
+
+#define DBC     1000
+
+int MIN = 524,              // VALORES MAXIMO E MINIMO PARA A CARGA
+    MAX = 2621,
+    MID = 1564,             // TENTATIVA DE IDENTIFICAR O MEIO, O VALOR CORRETO (APRX) 1572
+    PASSO = 104,            // Passo por button press
+    PWM = 0,                // Valor realmente passado ao motor
+    PERIODO = 20972;        // Valor de um período do PWM
+
+
+int ps1=ABT, ps2=ABT;
+
+void io_config ();
+int check_s1(void);
+int check_s2(void);
+
+void timer_config (void) {
+    TA2CTL = TASSEL_2   |   // Sel. SMCLK
+             ID_0       |   // Div por 1
+             MC_1       |   // Modo 1
+             TACLR;         // Começando Zerado
+    TA2EX0= TAIDEX_0;             // Dividir por 1 (TAIDEX = 0)
+    TA2CCR2 = MID;
+    TA2CCR0 = PERIODO;
+    TA2CCTL2 = OUTMOD_6;
+}
+
+int main (void){
+    WDTCTL = WDTPW | WDTHOLD;
+
+    io_config();
+    timer_config ();
+    PWM = MID;
+
+    while (TRUE){
+        if (check_s1()) PWM -= PASSO;
+        if (PWM < MIN) PWM = MIN;
+
+        if (check_s2()) PWM += PASSO;
+        if (PWM > MAX) PWM = MAX;
+
+        P4OUT &= ~BIT7;
+        P1OUT &= ~BIT0;
+
+        if (PWM == MIN)  P1OUT |= BIT0;
+        if (PWM == MAX)  P4OUT |= BIT7;
+        if (PWM == MID || PWM == 1581){
+            P1OUT |= BIT0;
+            P4OUT |= BIT7;
+        }
+
+        TA2CCR2 = PWM;
+    }
+    return 0;
+}
+
+void debounce (void){
+    volatile unsigned int x;
+    for (x=DBC;x>0;x--);
+}
+
+void io_config (void){
+    P2DIR &= ~BIT1;
+    P2REN |=    BIT1;
+    P2OUT |= BIT1;
+
+    P1DIR &= ~BIT1;
+    P1REN |=    BIT1;
+    P1OUT |= BIT1;
+
+    P1DIR |= BIT0;
+    P4DIR |= BIT7;
+
+    P2DIR |= BIT5;
+    P2SEL |= BIT5;
+}
+
+int check_s1 (void){
+    if ((P2IN & BIT1)==0){
+        if (ps1 == ABT){
+            debounce();
+            ps1=FEC;
+            return TRUE;
+        }else {
+            return FALSE;
+        }
+    }else {
+        if (ps1== ABT){
+            return FALSE;
+        }else{
+            debounce ();
+            ps1=ABT;
+            return FALSE;
+        }
+    }
+}
+
+int check_s2 (void){
+    if ((P1IN & BIT1)==0){
+        if (ps2 == ABT){
+            debounce();
+            ps2=FEC;
+            return TRUE;
+        }else {
+            return FALSE;
+        }
+    }else {
+        if (ps2== ABT){
+           return FALSE;
+        }else {
+            debounce ();
+            ps2=ABT;
+            return FALSE;
+        }
+    }
+    return FALSE;
+}

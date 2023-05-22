@@ -1,0 +1,218 @@
+;-------------------------------------------------------------------------------
+; MSP430 Assembler Code Template for use with TI Code Composer Studio
+;
+;
+;-------------------------------------------------------------------------------
+            .cdecls C,LIST,"msp430.h"       ; Include device header file
+            
+;-------------------------------------------------------------------------------
+            .def    RESET                   ; Export program entry-point to
+                                            ; make it known to linker.
+;-------------------------------------------------------------------------------
+            .text                           ; Assemble into program memory.
+            .retain                         ; Override ELF conditional linking
+                                            ; and retain current section.
+            .retainrefs                     ; And retain any sections that have
+                                            ; references to current section.
+
+;-------------------------------------------------------------------------------
+RESET       mov.w   #__STACK_END,SP         ; Initialize stackpointer  (0x4400)
+StopWDT     mov.w   #WDTPW|WDTHOLD,&WDTCTL  ; Stop watchdog timer
+
+
+;-------------------------------------------------------------------------------
+; Main loop here
+;-------------------------------------------------------------------------------
+
+RT_TAM		.equ	6			;Tamanho dos rotores
+CONF2		.equ	4			;Configuração do Rotor 2
+CONF3 		.equ	1			;Configuração do Rotor 3
+
+EXP5: 	MOV		#MSG,R5		;Preparando entrada
+		MOV 	#GSM,R6
+		; Configurando rotor 2
+		MOV		#RT2, R7
+		MOV		#CONF2, R8
+		CALL	#EXEC_CONFIG
+		MOV		#RT_ESQ, R8
+		CALL	#COPIA_RT
+		; Configurando rotor 3
+		MOV		#RT3, R7
+		MOV		#CONF3, R8
+		CALL	#EXEC_CONFIG
+		MOV		#RT_DIR, R8
+		CALL	#COPIA_RT	; Copiando o Rotot para RT_DIR
+
+		; Cifrando a entrada
+		CALL 	#ENIGMA5 	;Cifrar
+;
+; Agora é necessário uma
+; Sub-rot para restaurar posição original dos rotores
+;
+		; Resetando rotor 2
+		MOV		#RT_ESQ, R7
+		MOV		#RT2, R8
+		CALL	#COPIA_RT
+		; Resetando rotor 3
+		MOV		#RT_DIR, R7
+		MOV		#RT3, R8
+		CALL	#COPIA_RT
+		;
+		MOV #GSM,R5
+		MOV #DCF,R6
+		CALL #ENIGMA5 ;Decifrar
+		JMP $
+		NOP
+
+;
+; Sub-rot para aplicar a config no rotor enviado como parâmetro
+; Recebe:	R7
+;			R8	- Config do rotor
+; Retorna:	N/A	* Escreve na posição de memória do rotor passado
+; Usa:		R9	- Contador
+EXEC_CONFIG:		TST		R8
+					JEQ		EXEC_RT_NO_SHIFT
+EXEC_RT_SHIFT:		PUSH	R7
+					PUSH	@R7
+					INC		R7
+					MOV.B	#RT_TAM, R9
+					DEC		R9
+EXEC_RT_SHIFT_LOOP:	MOV.B	@R7, -1(R7)
+					INC		R7
+					DEC		R9
+					JZ		EXEC_RT_SHIFT_FIM
+					JMP		EXEC_RT_SHIFT_LOOP
+EXEC_RT_SHIFT_FIM:	POP		R9
+					MOV.B	R9, -1(R7)
+					DEC		R8
+					POP		R7
+					JNZ		EXEC_RT_SHIFT
+EXEC_RT_NO_SHIFT:	RET
+
+;
+; Recebe:  	R5 = início da mensagem em claro (ponteiro)
+;			R9 = Primeiro rotor a ser utilizado
+;			R10 = Segundo rotor a ser utilizado
+; Retorna: 	R6 = mensagem cifrada
+; Usa:		R7, R8 = auxiliar
+;			R9 = Contador
+ENIGMA5:					CLR		R9
+ENIGMA5_LOOP:				TST.B	0(R5)
+							JEQ		FIM_DO_VETOR
+							;
+							MOV.B	@R5, R8
+							SUB.B	#0x41,R8
+							MOV.B	RT2(R8),R8	; Busca no primeiro rotor
+							;
+							MOV.B	RT3(R8),R8	; Busca no segundo rotor
+							;
+							MOV.B	RF1(R8),R8
+							CLR 	R7
+RF_LOOP:					CMP.B 	RT3(R7),R8
+							JEQ 	RF_FOUND
+							INC		R7
+							JMP		RF_LOOP
+RF_FOUND:					MOV.B	R7, R8
+							; Busca final no rotor da esquerda
+							CLR 	R7
+RF_SEC_LOOP:				CMP.B 	RT2(R7),R8
+							JEQ 	RF_SEC_FOUND
+							INC		R7
+							JMP		RF_SEC_LOOP
+RF_SEC_FOUND:				MOV.B	R7, R8
+							;
+							ADD.B	#0x41,R8
+							MOV.B	R8, 0(R6)
+							;	Final do enigma4
+							INC 	R6
+							INC		R5
+							;	Rotação do ROTOR2
+							PUSH	R9
+							MOV		#RT2, R7
+							CALL	#EXEC_TO_THE_RIGHT
+							POP 	R9
+							INC		R9
+							;	Rotação condicional do ROTOR3
+							CMP.B	#RT_TAM, R9
+							JLO		ENIGMA5_SEC_RT_NO_SHIFT
+							MOV		#1, R8
+							MOV		#RT3, R7
+							CALL	#EXEC_TO_THE_RIGHT
+							CLR		R9
+							;
+ENIGMA5_SEC_RT_NO_SHIFT:	JMP		ENIGMA5_LOOP
+FIM_DO_VETOR:				RET
+
+;
+; Sub-rot para rodar o rotor enviado como parâmetro durante a cifragem de letras
+; Recebe:	R7
+;			R8	- Config do rotor
+; Retorna:	N/A	* Escreve na posição de memória do rotor passado
+; Usa:		R9	- Contador
+EXEC_TO_THE_RIGHT:
+EXEC_TO_THE_RIGHT_SHIFT:		ADD		#RT_TAM,R7
+								DEC		R7
+								PUSH.B	@R7
+								DEC		R7
+								MOV.B	#RT_TAM, R9
+								DEC		R9
+EXEC_TO_THE_RIGHT_SHIFT_LOOP:	MOV.B	@R7, 1(R7)
+								DEC		R7
+								DEC		R9
+								JZ		EXEC_TO_THE_RIGHT_SHIFT_FIM
+								JMP		EXEC_TO_THE_RIGHT_SHIFT_LOOP
+EXEC_TO_THE_RIGHT_SHIFT_FIM:	POP		R9
+								MOV.B	R9, 1(R7)
+EXEC_TO_THE_RIGHT_NO_SHIFT:		RET
+
+;
+; Sub-rot para rodar o rotor enviado como parâmetro durante a cifragem de letras
+; Recebe:	R7	- SRC
+;			R8	- DST
+; Retorna:	N/A	* Escreve na posição de memória do rotor DST passado
+; Usa:		R9	- Contador
+COPIA_RT:			MOV		#RT_TAM, R9 ; Configurando rotor
+COPIA_RT_LOOP:		TST		R9			;
+					JEQ		COPIA_RT_LOOP_FIM
+					;
+					MOV.B	@R7, 0(R8)
+					INC		R8
+					INC 	R7
+					DEC		R9
+					JMP		COPIA_RT_LOOP
+					;
+COPIA_RT_LOOP_FIM: 	RET
+
+; Dados para o enigma
+		.data
+MSG:	.byte	"CABECAFEFACAFAD",0	;Mensagem em claro
+GSM:	.byte	"XXXXXXXXXXXXXXX",0 ;Mensagem cifrada
+DCF:	.byte	"XXXXXXXXXXXXXXX",0 ;Mensagem decifrada
+; Rotores disponíveis
+ROTORES:
+RT1:	.byte	2, 4, 1, 5, 3, 0 	;Trama do Rotor 1
+RT2:	.byte	1, 5, 3, 2, 0, 4 	;Trama do Rotor 2
+RT3:	.byte	4, 0, 5, 2, 3, 1 	;Trama do Rotor 3
+RT4:	.byte	3, 4, 1, 5, 2, 0 	;Trama do Rotor 4
+RT5:	.byte	5, 2, 3, 4, 1, 0 	;Trama do Rotor 5
+RT_ESQ: .byte 	0, 0, 0, 0, 0, 0	; Cópia do rotor 2 para este exemplo
+RT_DIR: .byte 	0, 0, 0, 0, 0, 0	; Cópia do rotor 3 para este exemplo
+
+; Refletores disponíveis
+REFLETORES:
+RF1:	.byte	3, 5, 4, 0, 2, 1 	;Tabela do Refletor 1
+RF2:	.byte 	4, 5, 3, 2, 0, 1 	;Tabela do Refletor 2
+RF3:	.byte 	3, 2, 1, 0, 5, 4 	;Tabela do Refletor 3
+
+;-------------------------------------------------------------------------------
+; Stack Pointer definition
+;-------------------------------------------------------------------------------
+            .global __STACK_END
+            .sect   .stack
+            
+;-------------------------------------------------------------------------------
+; Interrupt Vectors
+;-------------------------------------------------------------------------------
+            .sect   ".reset"                ; MSP430 RESET Vector
+            .short  RESET
+            

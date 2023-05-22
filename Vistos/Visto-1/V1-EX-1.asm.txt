@@ -1,0 +1,88 @@
+;-------------------------------------------------------------------------------
+; MSP430 Assembler Code Template for use with TI Code Composer Studio
+;
+;
+;-------------------------------------------------------------------------------
+            .cdecls C,LIST,"msp430.h"       ; Include device header file
+            
+;-------------------------------------------------------------------------------
+            .def    RESET                   ; Export program entry-point to
+                                            ; make it known to linker.
+;-------------------------------------------------------------------------------
+            .text                           ; Assemble into program memory.
+            .retain                         ; Override ELF conditional linking
+                                            ; and retain current section.
+            .retainrefs                     ; And retain any sections that have
+                                            ; references to current section.
+
+;-------------------------------------------------------------------------------
+RESET       mov.w   #__STACK_END,SP         ; Initialize stackpointer  (0x4400)
+StopWDT     mov.w   #WDTPW|WDTHOLD,&WDTCTL  ; Stop watchdog timer
+
+
+;-------------------------------------------------------------------------------
+; Main loop here
+;-------------------------------------------------------------------------------
+EXP1:		MOV		#MSG,R5 		;inicializar R5 com a mensagem em claro
+			MOV 	#GSM,R6			;R6 será utilizado como a mensagem cifrada
+			MOV		#RT1, R7		;Rotor empregado na substituição inicial
+			MOV		#DEFAULT, R9	;Vetor referência utilizado durante a tradução
+			MOV 	#16, R10
+			CALL	#ENIGMA1
+			jmp 	$ 				;travar execução ao retornar da sub-rotina
+			NOP
+
+; Função que retorna menor elemento de umvetor
+; Recebe:  	R5 = início da mensagem em claro (ponteiro)
+; Retorna: 	R6 = mensagem cifrada
+; Usa:		R8 = auxiliar
+ENIGMA1:	MOV.B	@R5, R8
+			SUB.B	#0x41,R8
+			CMP.B	1(R9),R8
+			JLO		EH_A
+			JEQ		EH_B
+			CMP.B	3(R9),R8
+			JLO		EH_C
+			JEQ		EH_D
+			CMP.B	5(R9),R8
+			JLO		EH_E
+			JEQ		EH_F
+EH_A:		MOV.B	0(R7), R8
+			JMP		CONTINUE
+EH_B:		MOV.B	1(R7), R8
+			JMP		CONTINUE
+EH_C:		MOV.B	2(R7), R8
+			JMP		CONTINUE
+EH_D:		MOV.B	3(R7), R8
+			JMP		CONTINUE
+EH_E:		MOV.B	4(R7), R8
+			JMP		CONTINUE
+EH_F:		MOV.B	5(R7), R8
+CONTINUE:	ADD.B	#0x41,R8
+			MOV.B	R8, 0(R6)
+			INC 	R6
+			INC		R5
+			DEC		R10
+			JNZ		ENIGMA1
+			RET
+
+			.data
+; Declaração do vetor passado em aula pelo professor
+MSG: 		.byte	"CABECAFEFACAFAD",0	;Mensagem em claro
+GSM:		.byte	"XXXXXXXXXXXXXXX",0	;Mensagem cifrada
+RT1:		.byte	2, 4, 1, 5, 3, 0	;Trama do Rotor
+;					A, B, C, D, E, F	;Referência
+DEFAULT:	.byte	0, 1, 2, 3, 4, 5	;do rotor padrão
+
+;-------------------------------------------------------------------------------
+; Stack Pointer definition
+;-------------------------------------------------------------------------------
+            .global __STACK_END
+            .sect   .stack
+            
+;-------------------------------------------------------------------------------
+; Interrupt Vectors
+;-------------------------------------------------------------------------------
+            .sect   ".reset"                ; MSP430 RESET Vector
+            .short  RESET
+            

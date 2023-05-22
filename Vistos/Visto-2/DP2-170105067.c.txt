@@ -1,0 +1,163 @@
+#include <msp430.h>
+
+#define TRUE 1
+#define FALSE 0
+
+#define ABT 1
+#define FEC 0
+
+#define DBC 1000
+
+#define PERIODO_SERVO 20972   // Valor de um período do PWM
+#define PERIODO_TRIGGER 52429 // Valor de um período PARA O TRIGGER
+#define TRIGGER_CCR4 21
+
+#define MIN 524 // VALORES MAXIMO E MINIMO PARA A CARGA
+#define MAX 2621
+#define MID 1564  // TENTATIVA DE IDENTIFICAR O MEIO, O VALOR CORRETO (APRX) 1572
+#define PASSO 104 // Passo por button press
+
+// Variáveis que serão usadas no exemplo
+unsigned int cap1, cap2; // Receber o valor da captura
+long dif;                // Receber diferença entre as capturas
+float dist = 0.0;        // Valor da frequência
+
+// Headers
+void io_config(void);
+void calc_dist();
+void timer_config(void);
+void prog_servo(int);
+void leds(int);
+void cap_rising_edge(void);
+void cap_falling_edge(void);
+
+int main(void)
+{
+    WDTCTL = WDTPW | WDTHOLD;
+
+    io_config();
+    timer_config();
+
+    while (TRUE)
+    {
+        cap_rising_edge();
+        // Esperar pela primeira captura
+        TA1CCTL1 &= ~CCIFG; // Apagar CCIFG
+        while ((TA1CCTL1 & CCIFG) == 0)
+            ;               // Esperar primeiro flanco
+        TA1CCTL1 &= ~CCIFG; // Apagar CCIFG
+        cap1 = TA1CCR1;     // Ler primeira captura
+
+        // Esperar segundo flanco
+        cap_falling_edge();
+        while ((TA1CCTL1 & CCIFG) == 0)
+            ;
+        TA1CCTL1 &= ~CCIFG; // Apagar CCIFG
+        cap2 = TA1CCR1;     // Ler segunda captura
+
+        calc_dist();
+
+        int aux = MIN + (((50-dist)* 2097)/50);
+
+        prog_servo(aux);
+
+        leds(dist);
+    }
+    return 0;
+}
+
+void timer_config(void)
+{
+    // Configuração de TA1.1 e P2.0
+    TA1CTL = TASSEL_2 | MC_2; // SMCLK, Modo 2
+    // P2.0 como entrada
+    P2DIR &= ~BIT0;
+    P2REN |= BIT0; // Habilitar resistor
+    P2OUT |= BIT0; // Para pullup
+    P2SEL |= BIT0; // Dedicado para captura (TA1.1)
+
+    // Configure the timer to send trigger
+    TA0CTL = TASSEL_2 | // Sel. SMCLK
+             ID_0 |     // Div por 1
+             MC_1 |     // Modo 1
+             TACLR;     // Começando Zerado
+    TA0EX0 = TAIDEX_0;  // Dividir por 1 (TAIDEX = 0)
+    TA0CCR4 = TRIGGER_CCR4;
+    TA0CCR0 = PERIODO_TRIGGER;
+    TA0CCTL4 = OUTMOD_6;
+    // Selecting correct pins
+    P1DIR |= BIT5;
+    P1SEL |= BIT5;
+
+    // Configure the timer to use servomotor
+    TA2CTL = TASSEL_2 | // Sel. SMCLK
+             ID_0 |     // Div por 1
+             MC_1 |     // Modo 1
+             TACLR;     // Começando Zerado
+    TA2EX0 = TAIDEX_0;  // Dividir por 1 (TAIDEX = 0)
+    TA2CCR2 = MID;
+    TA2CCR0 = PERIODO_SERVO;
+    TA2CCTL2 = OUTMOD_6;
+    // Selecting correct pins
+    P2DIR |= BIT5;
+    P2SEL |= BIT5;
+}
+
+void cap_rising_edge(void)
+{
+    TA1CCTL1 = CM_1 | SCS | CAP; // Captura flanco de subida
+}
+
+void cap_falling_edge(void)
+{
+    TA1CCTL1 = CM_2 | SCS | CAP; // Captura flanco de descida
+}
+
+void calc_dist()
+{
+    // Calcular a frequência
+    dif = cap2 - cap1; // Calcular a diferença entre as capturas
+    if (dif < 0)
+        dif += 65536L;         // Se negativa, ajustar
+    dist = ((17 * dif) >> 10); // Calcular a distuência, conta em float
+}
+
+void prog_servo(int PWM)
+{
+    if (PWM < MIN)
+        PWM = MIN;
+    if (PWM > MAX)
+        PWM = MAX;
+    TA2CCR2 = PWM;
+}
+
+void leds(int PWM)
+{
+    P4OUT &= ~BIT7;
+    P1OUT &= ~BIT0;
+    if (PWM > 30 && PWM <= 50) P4OUT |= BIT7;
+    if (PWM > 10 && PWM <=30)
+    {
+        P1OUT |= BIT0;
+        return;
+    }
+    if (PWM <10 ){
+        P1OUT |= BIT0;
+        P4OUT |= BIT7;
+        return;
+    }
+}
+
+void io_config(void)
+{
+    P2DIR &= ~BIT1;
+    P2REN |= BIT1;
+    P2OUT |= BIT1;
+
+    P1DIR &= ~BIT1;
+    P1REN |= BIT1;
+    P1OUT |= BIT1;
+
+    P1DIR |= BIT0;
+    P4DIR |= BIT7;
+}

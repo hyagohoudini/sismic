@@ -1,0 +1,36 @@
+#include<msp430.h>
+
+#define TRUE    1
+#define FALSE   0
+#define MAX     16383       // Ao utilizar o ACLk, isso é: 32768 Hz * 0,5
+                            // Calc para estabelecer contagens a cada meioseg
+
+void io_config ();
+
+void io_config (void) {
+    P1DIR |= BIT0;
+    P1OUT &= ~BIT0;
+}
+
+void timer_config (void) {
+    TA0CTL = TASSEL_1   |   // Sel. ACLK
+             ID_0       |   // Div por 1
+             MC_1       |   // Modo 1
+             TACLR;         // Começando Zerado
+    TA0EX0 = 0;             // Dividir por 1 (TAIDEX = 0)
+    TA0CCR0 = MAX;
+}
+
+int main (void){
+    WDTCTL = WDTPW | WDTHOLD;
+
+    io_config();
+    timer_config ();
+
+    while (TRUE){
+        while((TA0CTL & TAIFG)== 0); //Esperar TAIFG
+        TA0CTL &= ~TAIFG;
+        P1OUT^=BIT0;
+    }
+    return 0;
+}

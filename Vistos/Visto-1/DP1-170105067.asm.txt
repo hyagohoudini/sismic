@@ -1,0 +1,365 @@
+;-------------------------------------------------------------------------------
+; MSP430 Assembler Code Template for use with TI Code Composer Studio
+;
+;
+;-------------------------------------------------------------------------------
+            .cdecls C,LIST,"msp430.h"       ; Include device header file
+            
+;-------------------------------------------------------------------------------
+            .def    RESET                   ; Export program entry-point to
+                                            ; make it known to linker.
+;-------------------------------------------------------------------------------
+            .text                           ; Assemble into program memory.
+            .retain                         ; Override ELF conditional linking
+                                            ; and retain current section.
+            .retainrefs                     ; And retain any sections that have
+                                            ; references to current section.
+
+;-------------------------------------------------------------------------------
+RESET       mov.w   #__STACK_END,SP         ; Initialize stackpointer  (0x4400)
+StopWDT     mov.w   #WDTPW|WDTHOLD,&WDTCTL  ; Stop watchdog timer
+
+
+;-------------------------------------------------------------------------------
+; Main loop here
+;-------------------------------------------------------------------------------
+
+CONF2		.equ	8			;Configuração do Rotor 2
+CONF3 		.equ	3			;Configuração do Rotor 3
+
+EXP5: 	MOV		#MSG_CLARA,R5		;Preparando entrada
+		MOV 	#MSG_CIFR,R6
+		;	Aplicando a chave de entrada
+		CALL	#INITIAL_CONFIG
+		; Cifrando a entrada
+		CALL 	#ENIGMA 	;Cifrar
+;
+; Agora é necessário uma
+; Sub-rot para restaurar posição original dos rotores
+		CALL	#RESET_CONFIG
+		MOV #MSG_CIFR,R5
+		MOV #MSG_DECIFR,R6
+		;	Decifrando entrada já cifrada para fins de teste
+		CALL #ENIGMA ;Decifrar
+		JMP $
+		NOP
+
+RESET_CONFIG: 	; Resetando rotor DA ESQ
+				MOV		&RT_ESQ_END, R7
+				MOV		#RT_ESQ, R8
+				CALL	#COPIA_RT
+				; Resetando rotor DO MEIO
+				MOV		&RT_MEIO_END, R7
+				MOV		#RT_MEIO, R8
+				CALL	#COPIA_RT
+				; Resetando rotor DA DIR
+				MOV		&RT_DIR_END, R7
+				MOV		#RT_DIR, R8
+				CALL	#COPIA_RT
+				RET
+		;
+
+INITIAL_CONFIG: ; Pegando os Rotores da chave
+				CALL	#END_TODOS_RT_E_RF
+				; Configurando o rotor da esquerda
+				MOV		&RT_ESQ_END, R7
+				MOV		&(CHAVE+2), R8
+				CALL	#EXEC_CONFIG
+				MOV		#RT_ESQ, R8
+				CALL	#COPIA_RT
+				; Configurando rotor DO MEIO
+				MOV		&RT_MEIO_END, R7
+				MOV		&(CHAVE+6), R8
+				CALL	#EXEC_CONFIG
+				MOV		#RT_MEIO, R8
+				CALL	#COPIA_RT
+				; Configurando rotor DA DIREITA
+				MOV		&RT_DIR_END, R7
+				MOV		&(CHAVE+10), R8
+				CALL	#EXEC_CONFIG
+				MOV		#RT_DIR, R8
+				CALL	#COPIA_RT
+				; Copiando o Refletor em uso
+				MOV		&REF_END, R7
+				MOV		#REF_IN_USE, R8
+				CALL	#COPIA_RT
+				RET
+;
+; Recebe:  	R5 = início da mensagem em claro (ponteiro)
+; Retorna: 	R6 = mensagem cifrada
+; Usa:		R7, R8 = auxiliar
+;			R10, R11, R12 = Contador
+ENIGMA:						CLR		R10
+							CLR		R11
+ENIGMA5_LOOP:				TST.B	0(R5)
+							JEQ		FIM_DO_VETOR
+							;
+							MOV.B	@R5, R8
+							; Conferindo entrada
+							CMP.B	#0x41,R8
+							JLO		ENIGMA_NONCHAR_ENTRY ; Se não for letra, não é cifrado/decifrado
+							CMP.B	#0x5B, R8
+							JHS		ENIGMA_NONCHAR_ENTRY ; Se não for letra, não é cifrado/decifrado
+							SUB.B	#0x41,R8
+							; Início da busca
+							MOV.B	RT_ESQ(R8),R8	; Busca no rotor DO MEIO
+							;
+							MOV.B	RT_MEIO(R8),R8	; Busca no rotor DO MEIO
+							;
+							MOV.B	RT_DIR(R8),R8	; Busca no rotor DA DIREITA
+							; Busca no refletor
+							MOV.B	REF_IN_USE(R8),R8
+							CLR 	R7
+							; Busca final no rotor da direita
+RF_LOOP:					CMP.B 	RT_DIR(R7),R8
+							JEQ 	RF_FOUND
+							INC		R7
+							JMP		RF_LOOP
+RF_FOUND:					MOV.B	R7, R8
+							; Busca final no rotor do meio
+							CLR 	R7
+RF_SEC_LOOP:				CMP.B 	RT_MEIO(R7),R8
+							JEQ 	RF_SEC_FOUND
+							INC		R7
+							JMP		RF_SEC_LOOP
+RF_SEC_FOUND:				MOV.B	R7, R8
+							; Busca final no rotor da direita
+							CLR 	R7
+RF_3RD_LOOP:				CMP.B 	RT_ESQ(R7),R8
+							JEQ 	RF_3RD_FOUND
+							INC		R7
+							JMP		RF_3RD_LOOP
+RF_3RD_FOUND:				MOV.B	R7, R8
+							ADD.B	#0x41,R8
+							;	Rotação da esquerda
+							MOV		#RT_ESQ, R7
+							CALL	#EXEC_TO_THE_RIGHT
+							INC		R10
+							;	Rotação condicional do meio
+							CMP.B	&RT_TAM, R10
+							JLO		ENIGMA5_SEC_RT_NO_SHIFT
+							MOV		#RT_MEIO, R7
+							CALL	#EXEC_TO_THE_RIGHT
+							CLR		R10
+							INC		R11
+							;	Rotação condicional da direita
+							CMP.B	&RT_TAM, R11
+							JLO		ENIGMA5_SEC_RT_NO_SHIFT
+							MOV		#RT_DIR, R7
+							CALL	#EXEC_TO_THE_RIGHT
+							CLR		R11
+ENIGMA5_SEC_RT_NO_SHIFT:
+ENIGMA_NONCHAR_ENTRY:		MOV.B	R8, 0(R6)
+							;	Final do enigma4
+							MOV.B	R8, 0(R6)
+							INC 	R6
+							INC		R5
+							JMP		ENIGMA5_LOOP
+FIM_DO_VETOR:				RET
+
+;
+; Sub-rot para rodar o rotor enviado como parâmetro durante a cifragem de letras
+; Recebe:	R7
+; Retorna:	N/A	* Escreve na posição de memória do rotor passado
+; Usa:		R9	- Contador
+EXEC_TO_THE_RIGHT:
+EXEC_TO_THE_RIGHT_SHIFT:		ADD		&RT_TAM,R7
+								DEC		R7
+								PUSH.B	@R7
+								DEC		R7
+								MOV.B	&RT_TAM, R9
+								DEC		R9
+EXEC_TO_THE_RIGHT_SHIFT_LOOP:	MOV.B	@R7, 1(R7)
+								DEC		R7
+								DEC		R9
+								JZ		EXEC_TO_THE_RIGHT_SHIFT_FIM
+								JMP		EXEC_TO_THE_RIGHT_SHIFT_LOOP
+EXEC_TO_THE_RIGHT_SHIFT_FIM:	POP		R9
+								MOV.B	R9, 1(R7)
+EXEC_TO_THE_RIGHT_NO_SHIFT:		RET
+
+;
+; Sub-rot para aplicar a config no rotor enviado como parâmetro
+; Recebe:	R7
+;			R8	- Config do rotor
+; Retorna:	N/A	* Escreve na posição de memória do rotor passado
+; Usa:		R9	- Contador
+EXEC_CONFIG:		TST		R8
+					JEQ		EXEC_RT_NO_SHIFT
+EXEC_RT_SHIFT:		PUSH	R7
+					PUSH	@R7
+					INC		R7
+					MOV.B	&RT_TAM, R9
+					DEC		R9
+EXEC_RT_SHIFT_LOOP:	MOV.B	@R7, -1(R7)
+					INC		R7
+					DEC		R9
+					JZ		EXEC_RT_SHIFT_FIM
+					JMP		EXEC_RT_SHIFT_LOOP
+EXEC_RT_SHIFT_FIM:	POP		R9
+					MOV.B	R9, -1(R7)
+					DEC		R8
+					POP		R7
+					JNZ		EXEC_RT_SHIFT
+EXEC_RT_NO_SHIFT:	RET
+
+;
+; Sub-rot para rodar o rotor enviado como parâmetro durante a cifragem de letras
+; Recebe:	R7	- SRC
+;			R8	- DST
+; Retorna:	N/A	* Escreve na posição de memória do rotor DST passado
+; Usa:		R9	- Contador
+COPIA_RT:			MOV		&RT_TAM, R9 ; Configurando rotor
+COPIA_RT_LOOP:		TST		R9			;
+					JEQ		COPIA_RT_LOOP_FIM
+					;
+					MOV.B	@R7, 0(R8)
+					INC		R8
+					INC 	R7
+					DEC		R9
+					JMP		COPIA_RT_LOOP
+					;
+COPIA_RT_LOOP_FIM: 	RET
+
+
+;
+; Função para calcular o endereço de um rotor
+; Recebe:	R11 = Nr de um rotor
+; Retorna:	R11 = Endereço do rotor
+; Usa:		R12 = Rascunho
+CALC_END_RT:
+			MOV		#ROTORES,R12
+CLB:		DEC		R11
+			JZ		CFIM
+			ADD		&RT_TAM,R12
+			JMP		CLB
+CFIM:		MOV		R12,R11
+			RET
+
+;
+; Função para calcular o endereço de um rotor
+; Recebe:	R11 = Nr de um rotor
+; Retorna:	R11 = Endereço do rotor
+; Usa:		R12 = Rascunho
+CALC_END_RF:
+					MOV		#REFLETORES,R12
+CALC_END_RF_LOOP:	DEC		R11
+					JZ		CFIM
+					ADD		&RT_TAM,R12
+					JMP		CLB
+CALC_END_RF_FIM:	MOV		R12,R11
+					RET
+
+
+;
+; Função para calcular o endereço de TODOS os rotores
+; Vai ler a chave e preencher as variáveis com os endereços
+; Rotor Esq, Rotor Meio, Rotor Dir
+; Recebe:	nada
+; Retorna:	Rotor Esq, Rotor Meio, Rotor Dir atualizados
+; Usa:		R11 e R12 = Rascunho
+END_TODOS_RT_E_RF:
+		; Rotor esquerda
+		MOV		&CHAVE,R11
+		CALL	#CALC_END_RT		;End rot esq
+		MOV		R11,&RT_ESQ_END		;Armazenar endereço
+		; Rotor meio
+		MOV		&(CHAVE+4),R11
+		CALL	#CALC_END_RT		;End rot meio
+		MOV		R11,&RT_MEIO_END		;Armazenar endereço
+		; Rotor direita
+		MOV		&(CHAVE+8),R11
+		CALL	#CALC_END_RT		;End rot dir
+		MOV		R11,&RT_DIR_END		;Armazenar endereço
+		; Refletor utilizado
+		MOV		&(CHAVE+12), R11
+		CALL	#CALC_END_RF
+		MOV		R11, &REF_END
+		RET
+*********************************
+******    Área de dados    ******
+*********************************
+		.data
+
+; Chave = A, B, C, D, E, F, G
+;A = número do rotor à esquerda e B = sua configuração;
+;C = número do rotor central e    D = sua configuração;
+;E = número do rotor à direita e  F = sua configuração;
+;G = número do refletor.
+;               A B   C D    E F   G
+CHAVE:	.word	2,4,  5,8,   3,3,  2		;<<<===========
+
+***********************************************
+*** Área dos dados do Enigma. Não os altere ***
+***********************************************
+RT_TAM:	.word	26		;Tamanho
+RT_QTD:	.word	05		;Quantidade de Rotores
+RF_QTD:	.word	03		;Quantidade de Refletores
+
+VAZIO:	.space 12		;Para facilitar endereço do rotor 1
+
+;Rotores com 26 posições
+ROTORES:
+RT1:	.byte	20,  6, 21, 25, 11, 15, 16, 18,  0,  7,  1, 22,  9, 17, 24,  5,  8, 23, 19, 13, 12, 14,  3,  2, 10,  4
+RT2:	.byte	12, 18, 25, 22,  2, 23,  9,  5,  3,  6, 15, 14, 24, 11, 19,  4,  8, 21, 17,  7, 16,  1,  0, 10, 13, 20
+RT3:	.byte	23, 21, 18,  2, 15, 14,  0, 25,  3,  8,  4, 17,  7, 24,  5, 10, 11, 20, 22,  1, 12,  9, 16,  6, 19, 13
+RT4:	.byte	22, 21,  7,  0, 16,  3,  4,  8,  2,  9, 23, 20,  1, 11, 25,  5, 24, 14, 12,  6, 18, 13, 10, 19, 17, 15
+RT5:	.byte	20, 17, 13, 11, 25, 16, 23,  3, 19,  4, 24,  5,  1, 12,  8,  9, 15, 22,  6,  0, 21,  7, 14, 18,  2, 10
+
+;Refletores com 26 posições
+REFLETORES:
+RF1:	.byte	14, 11, 25,  4,  3, 22, 20, 18, 15, 13, 12,  1, 10,  9,  0,  8, 24, 23,  7, 21,  6, 19,  5, 17, 16,  2
+RF2:	.byte	 1,  0, 16, 25,  6, 24,  4, 23, 14, 13, 17, 18, 19,  9,  8, 22,  2, 10, 11, 12, 21, 20, 15,  7,  5,  3
+RF3:	.byte	21,  7,  5, 19, 18,  2, 16,  1, 14, 22, 24, 17, 20, 25,  8, 23,  6, 11,  4,  3, 12,  0,  9, 15, 10, 13
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Área da mesagem em claro, cifrada e decifrada ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+MSG_CLARA:
+		.byte	"UMA NOITE DESTAS, VINDO DA CIDADE PARA O ENGENHO NOVO,"
+		.byte	" ENCONTREI NO TREM DA CENTRAL UM RAPAZ AQUI DO BAIRRO,"
+		.byte 	" QUE EU CONHECO DE VISTA E DE CHAPEU.@MACHADO\ASSIS",0
+
+MSG_CIFR:
+		.byte	"XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+		.byte	"XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+		.byte 	"XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",0
+
+MSG_DECIFR:
+		.byte	"ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ"
+		.byte	"ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ"
+		.byte 	"ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ",0
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; Coloque aqui suas Variáveis ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;
+; Posições que serão preenchidas de acordo com a chave
+RT_ESQ_END:		.space	2	;0x26D0 - Endereço do Rotor da esquerda
+RT_MEIO_END:	.word	0	;0x26D2 - Endereço do Rotor do meio
+RT_DIR_END:		.word	0	;0x26D4 - Endereço do Rotor da direita
+REF_END:		.word	0	;0x26D8 - Endereço do Refletor
+
+; Cópia dos RTs
+RT_ESQ: .byte 	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+RT_MEIO .byte 	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+RT_DIR: .byte  	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+REF_IN_USE: .byte  	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+
+V1:		.word	0	;0x26D8 - Endereço do Refletor
+V2:		.word	0	;0x26D8 - Endereço do Refletor
+V3:		.word	0	;0x26D8 - Endereço do Refletor
+
+;-------------------------------------------------------------------------------
+; Stack Pointer definition
+;-------------------------------------------------------------------------------
+            .global __STACK_END
+            .sect   .stack
+            
+;-------------------------------------------------------------------------------
+; Interrupt Vectors
+;-------------------------------------------------------------------------------
+            .sect   ".reset"                ; MSP430 RESET Vector
+            .short  RESET
+            
